@@ -1,0 +1,24 @@
+# Controls what `gcloud builds submit` uploads as the build context.
+# Keep secrets, local state, venv, and bulk media out of the upload + image.
+.git/
+.gitignore
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+service-account*.json
+*.key
+*.pem
+.transcriber_cache.json
+*.cache.json
+out/
+*.wav
+*.mp4
+*.mov
+*.m4v
+*.log
+.DS_Store

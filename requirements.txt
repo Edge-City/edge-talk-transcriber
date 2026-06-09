@@ -1,0 +1,10 @@
+# Transcription engine (CPU, MIT-licensed, no API keys)
+faster-whisper>=1.1.0
+
+# Google Drive + Cloud Storage
+google-api-python-client>=2.120.0
+google-auth>=2.29.0
+google-cloud-storage>=2.16.0
+
+# Local config loading (.env). On Cloud Run, env vars are set directly.
+python-dotenv>=1.0.1

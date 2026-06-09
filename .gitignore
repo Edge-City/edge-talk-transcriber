@@ -1,0 +1,42 @@
+# === GCP / credentials — NEVER commit ===
+service-account*.json
+service_account*.json
+*-credentials.json
+credentials.json
+*.key
+*.pem
+*.p12
+*.pfx
+
+# === Environment / config secrets ===
+.env
+.env.*
+!.env.example
+
+# === Pipeline cache / state ===
+.transcriber_cache.json
+*.cache.json
+pipeline-state/
+
+# === Local transcription scratch / output ===
+out/
+*.wav
+*.mp4
+*.mov
+*.m4v
+*.mkv
+
+# === Python ===
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# === Logs ===
+*.log
+
+# === OS / IDE ===
+.DS_Store
+.idea/
+.vscode/
