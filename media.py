@@ -16,11 +16,15 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from googleapiclient.http import MediaIoBaseDownload
+import google.auth
+from google.auth.transport.requests import AuthorizedSession
 
 from config import WORKDIR
 
-CHUNK_SIZE = 16 * 1024 * 1024  # 16 MB download chunks
+CHUNK_SIZE = 8 * 1024 * 1024   # 8 MB write chunks
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+_session = None
 
 
 def _workdir() -> Path:
@@ -29,33 +33,63 @@ def _workdir() -> Path:
     return Path(base)
 
 
-def download_video(service, video, dest_dir: Path, attempts: int = 3) -> Path:
-    """
-    Download a Drive video to dest_dir, streaming to disk in chunks.
+def _authed_session() -> AuthorizedSession:
+    global _session
+    if _session is None:
+        creds, _ = google.auth.default(scopes=[DRIVE_SCOPE])
+        _session = AuthorizedSession(creds)
+    return _session
 
-    Large multi-GB downloads from Drive occasionally drop the connection
-    (broken pipe / SSL EOF). next_chunk(num_retries=...) retries transient
-    HTTP errors per chunk, and the outer loop restarts the whole download if
-    the stream dies mid-way.
+
+def download_video(service, video, dest_dir: Path, attempts: int = 12) -> Path:
+    """
+    Download a Drive video to dest_dir with RESUME-on-failure.
+
+    Multi-GB downloads from Drive routinely drop the connection mid-stream
+    (broken pipe / SSL EOF), and a plain restart just drops again at a similar
+    point — so the largest files never finish. Instead we stream to disk and,
+    whenever the connection dies, resume from the byte we got to using an HTTP
+    Range request. Each attempt makes forward progress, so any file completes
+    given enough attempts.
     """
     ext = Path(video.name).suffix or ".mp4"
     out = dest_dir / f"{video.drive_id}{ext}"
+    url = (f"https://www.googleapis.com/drive/v3/files/{video.drive_id}"
+           f"?alt=media&supportsAllDrives=true")
+    total = int(video.size_bytes or 0)
+    session = _authed_session()
+
     last_err = None
     for attempt in range(1, attempts + 1):
-        try:
-            request = service.files().get_media(fileId=video.drive_id, supportsAllDrives=True)
-            with open(out, "wb") as fh:
-                downloader = MediaIoBaseDownload(fh, request, chunksize=CHUNK_SIZE)
-                done = False
-                while not done:
-                    status, done = downloader.next_chunk(num_retries=5)
-                    if status:
-                        print(f"    downloading {int(status.progress() * 100)}%", end="\r")
-            print(" " * 30, end="\r")
+        have = out.stat().st_size if out.exists() else 0
+        if total and have >= total:
+            print(" " * 40, end="\r")
             return out
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        try:
+            with session.get(url, headers=headers, stream=True, timeout=(30, 300)) as r:
+                # 200 (fresh) or 206 (partial/resume) are both fine.
+                if r.status_code not in (200, 206):
+                    r.raise_for_status()
+                mode = "ab" if have else "wb"
+                with open(out, mode) as fh:
+                    for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                        if chunk:
+                            fh.write(chunk)
+                            if total:
+                                pct = int(fh.tell() / total * 100)
+                                print(f"    downloading {pct}%", end="\r")
+            if total and out.stat().st_size >= total:
+                print(" " * 40, end="\r")
+                return out
+            if not total:  # size unknown — one clean pass is all we can verify
+                print(" " * 40, end="\r")
+                return out
         except Exception as e:
             last_err = e
-            print(f"    ⚠️  download attempt {attempt}/{attempts} failed ({type(e).__name__}); retrying...")
+            got = out.stat().st_size if out.exists() else 0
+            print(f"    ⚠️  download dropped at {got}/{total or '?'} bytes "
+                  f"(attempt {attempt}/{attempts}, {type(e).__name__}); resuming...")
     raise RuntimeError(f"download failed after {attempts} attempts: {last_err}")
 
 
